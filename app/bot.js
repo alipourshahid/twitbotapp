@@ -4,7 +4,18 @@
 //
 var Twit = require('../lib/twitter');
 var _usc = require('../node_modules/underscore');
-var colors = require('../node_modules/colors');  
+var colors = require('../node_modules/colors');
+var mongoose = require('../node_modules/mongoose');
+require('./Friend');
+
+mongoose.connect('mongodb://localhost/friends');
+var db = mongoose.connection;
+db.on('error', console.error.bind(console, 'DB connection error:'));
+db.once('open', function() {
+  console.log("Connection to MongoDB is open");
+});
+
+var Friend = mongoose.model('Friend');
 
 var _keywords = [
     'visualization', 
@@ -71,13 +82,43 @@ Bot.prototype.mingle = function () {
 
 Bot.prototype.findFriendsOfFollower = function(){
 
-        console.log('=====There are no candidates left, need to look for new ones.======' .yellow);
+        console.log('=====There are no candidates in the queue, looking for new ones.======' .yellow);
 
         var self = this;
 
-        followerId  = _usc.first(self.followers);
-        self.followers = _usc.rest(self.followers);
-        console.log('this is the user that we will look through his friend: ' + followerId);
+        var foundOne = false;
+
+        //while(self.followers.length > 0 && !foundOne){
+          followerId  = _usc.first(self.followers);
+          self.followers = _usc.rest(self.followers);
+          
+
+          Friend.count({ id: followerId }, function (err, count) {
+            if (err) console.log(err);
+            console.log('there are ' + count + ' firends with that id: ' + followerId);
+          });
+
+          Friend.find(function (err, friends) {
+           if (err) return console.error(err);
+           console.log('=== All friends saved in DB so far' .green);
+           console.log(friends);
+         });
+
+         // foundOne = (query.length > 0)? true:false;
+
+        //}
+
+        //save the friend id and date in the database
+        var myFriend = new Friend({
+          id: followerId,
+          followersCount: 0,
+          followers: [{id: ""}]
+        });
+
+        myFriend.save(function (err, fluffy) {
+            if (err) return console.error(err);
+            myFriend.saved();
+        });
 
         self.twit.get('friends/ids', { user_id: followerId }, function(err, reply) {
           if(err) { return self.reportMingled(err); }
