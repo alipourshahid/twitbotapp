@@ -6,7 +6,10 @@ var Twit = require('../lib/twitter');
 var _usc = require('../node_modules/underscore');
 var colors = require('../node_modules/colors');
 var mongoose = require('../node_modules/mongoose');
+
+//import the schemas
 require('./Friend');
+require('./Followed');
 
 mongoose.connect('mongodb://localhost/friends');
 var db = mongoose.connection;
@@ -15,7 +18,9 @@ db.once('open', function() {
   console.log("Connection to MongoDB is open");
 });
 
+//Define the models
 var Friend = mongoose.model('Friend');
+var Followed = mongoose.model('Followed');
 
 var _keywords = [
     'visualization', 
@@ -30,6 +35,8 @@ var _keywords = [
     'kanban', 
     'founder', 
     'software', 
+    'devops',
+    'process improvement', 
     'd3'];
 
 var Bot = module.exports = function(config) { 
@@ -40,7 +47,8 @@ var Bot = module.exports = function(config) {
 Bot.prototype.noneFollowersIds = [];
 Bot.prototype.pruneCandidates = [];
 Bot.prototype.friendCandidates = [];
-Bot.prototype.followers = []; 
+Bot.prototype.followers = [];
+Bot.prototype.followerId = ""; 
 
 //
 //  post a tweet
@@ -65,7 +73,7 @@ Bot.prototype.mingle = function () {
     self.evaluateFriendCandidates();
   } 
   else if (self.followers && self.followers.length > 0) {
-       self.findFriendsOfFollower();
+       self.selectNextFollower();
   }
   else {
     console.log('=====Yaay went through all your friends friends once.... now one more time!======' .red);
@@ -73,54 +81,56 @@ Bot.prototype.mingle = function () {
         if(err) { return self.reportMingled(err); }
         
         self.followers = reply.ids
-        self.findFriendsOfFollower();
+        self.selectNextFollower();
 
 
       })
   }
 };
 
-Bot.prototype.findFriendsOfFollower = function(){
+Bot.prototype.selectNextFollower = function(){
+  var self = this;
+  
+  console.log('=====Selecting the next follower to crawl its friends======' .yellow);
 
-        console.log('=====There are no candidates in the queue, looking for new ones.======' .yellow);
+  var foundOne = false;
+
+
+  Friend.find(function (err, friends) {
+   if (err) return console.error(err);
+
+  var savedFriendsIds = _usc.pluck(friends, 'id');
+   //IDs are saved as strings TODO: maybe we should save them as number if they are always number anyway
+  savedFriendsIds = _usc.map(savedFriendsIds, function(value){ return parseInt(value)});
+
+  self.followers = _usc.difference(self.followers, savedFriendsIds);
+ 
+  self.followerId  = _usc.first(self.followers);
+  self.followers = _usc.rest(self.followers);
+
+ //save the friend id and date in the database
+   var myFriend = new Friend({
+      id: self.followerId,
+     followersCount: 0,
+      followers: [{id: ""}]
+    });
+
+  myFriend.save(function (err, saved) {
+      if (err) return console.error(err);
+      myFriend.saved();
+  });
+
+  self.findFriendsOfFollower();
+
+ });
+
+}
+
+Bot.prototype.findFriendsOfFollower = function(){
 
         var self = this;
 
-        var foundOne = false;
-
-        //while(self.followers.length > 0 && !foundOne){
-          followerId  = _usc.first(self.followers);
-          self.followers = _usc.rest(self.followers);
-          
-
-          Friend.count({ id: followerId }, function (err, count) {
-            if (err) console.log(err);
-            console.log('there are ' + count + ' firends with that id: ' + followerId);
-          });
-
-          Friend.find(function (err, friends) {
-           if (err) return console.error(err);
-           console.log('=== All friends saved in DB so far' .green);
-           console.log(friends);
-         });
-
-         // foundOne = (query.length > 0)? true:false;
-
-        //}
-
-        //save the friend id and date in the database
-        var myFriend = new Friend({
-          id: followerId,
-          followersCount: 0,
-          followers: [{id: ""}]
-        });
-
-        myFriend.save(function (err, fluffy) {
-            if (err) return console.error(err);
-            myFriend.saved();
-        });
-
-        self.twit.get('friends/ids', { user_id: followerId }, function(err, reply) {
+        self.twit.get('friends/ids', { user_id: self.followerId }, function(err, reply) {
           if(err) { return self.reportMingled(err); }
           
           self.friendCandidates = reply.ids
@@ -168,13 +178,23 @@ Bot.prototype.evaluateFriendCandidates = function(){
 }
 
 Bot.prototype.reportMingled = function(err, reply) {
-      if(err) {
-        console.log(err.message);
-      } else {
-      var name = reply.screen_name;
-      console.log("\nMingle: followed @" + name);        
-      }
+  if(err) {
+    console.log(err.message);
+  } else {
+    var name = reply.screen_name;
+        console.log("\nMingle: followed @" + name);
 
+    //save the info of the newly followed user in the DB. 
+     var myNewFollowed = new Followed({
+        id: reply.id,
+        screen_name: reply.screen_name
+      });
+
+    myNewFollowed.save(function (err, saved) {
+        if (err) return console.error(err);
+        myNewFollowed.saved();
+    });
+  }
 }
 //
 //  prune your followers list; unfollow a friend that hasn't followed you back
@@ -314,6 +334,7 @@ function shouldFollow (user){
     }
     for (var i = 0; i < _keywords.length; i++){
       if (sDescription.toLowerCase().indexOf(_keywords[i])>0){
+        console.log("The candidate's description has: " + _keywords[i]); 
         return true; 
       }
       return false; 

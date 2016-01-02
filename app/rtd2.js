@@ -81,7 +81,7 @@ setInterval(function() {
     });
 */
   }
-}, 6000);
+}, 60000);
  
 function handleError(err) {
   console.error("response status:", err.statusCode);
